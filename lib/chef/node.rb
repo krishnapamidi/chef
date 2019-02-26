@@ -696,11 +696,15 @@ class Chef
     # @return [String] UUID for the node
     #
     def node_uuid
-      unless File.exists?(Chef::Config[:chef_guid_path])
-        File.write(Chef::Config[:chef_guid_path], SecureRandom.uuid)
+      path = File.expand_path(Chef::Config[:chef_guid_path])
+      dir = File.dirname(path)
+
+      unless File.exists?(path)
+        FileUtils.mkdir_p(dir)
+        File.write(path, SecureRandom.uuid)
       end
 
-      File.open(Chef::Config[:chef_guid_path]).first.chomp
+      File.open(path).first.chomp
     end
 
   end
