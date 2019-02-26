@@ -187,7 +187,7 @@ class Chef
     end
 
     def total_res_count
-      action_collection.total_res_count
+      updated_resources.count
     end
 
     def prepare_run_data

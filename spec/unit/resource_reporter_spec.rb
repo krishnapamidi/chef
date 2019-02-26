@@ -75,7 +75,7 @@ describe Chef::ResourceReporter do
   context "when first created" do
 
     it "has no updated resources" do
-      expect(resource_reporter.updated_resources.size).to eq(0)
+      expect(resource_reporter.updated_resources.count).to eq(0)
     end
 
     it "reports a successful run" do
@@ -137,7 +137,7 @@ describe Chef::ResourceReporter do
       end
 
       it "collects the resource as an updated resource" do
-        expect(resource_reporter.updated_resources.size).to eq(1)
+        expect(resource_reporter.updated_resources.count).to eq(1)
       end
 
       it "collects the desired state of the resource" do
@@ -162,7 +162,7 @@ describe Chef::ResourceReporter do
         end
 
         it "has no updated resources" do
-          expect(resource_reporter.updated_resources.size).to eq(0)
+          expect(resource_reporter.updated_resources.count).to eq(0)
         end
       end
 
@@ -174,7 +174,7 @@ describe Chef::ResourceReporter do
         end
 
         it "has no updated resources" do
-          expect(resource_reporter.updated_resources.size).to eq(0)
+          expect(resource_reporter.updated_resources.count).to eq(0)
         end
       end
 
@@ -187,7 +187,7 @@ describe Chef::ResourceReporter do
         end
 
         it "collects the updated resource" do
-          expect(resource_reporter.updated_resources.size).to eq(1)
+          expect(resource_reporter.updated_resources.count).to eq(1)
         end
 
         it "collects the old state of the resource" do
@@ -239,7 +239,7 @@ describe Chef::ResourceReporter do
         end
 
         it "does not collect data about the nested resource" do
-          expect(resource_reporter.updated_resources.size).to eq(1)
+          expect(resource_reporter.updated_resources.count).to eq(1)
         end
       end
 
@@ -255,7 +255,7 @@ describe Chef::ResourceReporter do
         end
 
         it "does not collect data about the nested resource" do
-          expect(resource_reporter.updated_resources.size).to eq(1)
+          expect(resource_reporter.updated_resources.count).to eq(1)
         end
       end
 
@@ -268,7 +268,7 @@ describe Chef::ResourceReporter do
         end
 
         it "collects the resource as an updated resource" do
-          expect(resource_reporter.updated_resources.size).to eq(1)
+          expect(resource_reporter.updated_resources.count).to eq(1)
         end
 
         it "collects the desired state of the resource" do

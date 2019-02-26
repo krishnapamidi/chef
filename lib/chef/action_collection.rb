@@ -20,48 +20,52 @@ require "chef/event_dispatch/base"
 class Chef
   class ActionCollection < EventDispatch::Base
     include Enumerable
+    extend Forwardable
 
     class ActionRecord
 
-      # The "new_resource" or declared state that we (ab)use for the after-state since
-      # we have no explicit after_resource.  XXX: this object may be mutated by the
-      # user and the state may change and result in buggy output.
+      # XXX: this is buggy since we (ab)use this resource for "after" state and it may be
+      # inaccurate and it may be mutated by the user.  A third after_resource should be added
+      # to new_resource + current_resource to properly implement this.
+      #
+      # @return [Chef::Resource] The declared resource state.
       #
       attr_accessor :new_resource
 
-      # The loaded current_resource (before-state).  This can be nil in the case of
-      # non-why-run-safe resources in why-run mode, or in the case where
-      # load_current_resource threw an exception (which is bad practice, but happens).
-      #
+      # @return [Chef::Resource] The current_resource object (before-state).  This can be nil
+      # for non-why-run-safe resources in why-run mode, or if load_current_resource itself
+      # threw an exception (which should be considered a bug in that load_current_resource
+      # implementation, but must be handled), or for unprocessed resources.
       attr_accessor :current_resource
 
-      # The action that was run (or scheduled to run in the case of "unprocessed" resources).
-      #
+      # @return [Symbol] # The action that was run (or scheduled to run in the case of "unprocessed" resources).
       attr_accessor :action
 
-      # The exception that was thrown
-      #
+      # @return [Exception] The exception that was thrown
       attr_accessor :exception
 
-      # The elapsed time in seconds with machine precision
-      #
+      # @return [Numeric] The elapsed time in seconds with machine precision
       attr_accessor :elapsed_time
 
-      # The conditional that caused the resource to be skipped
-      #
+      # @return [Chef::Resource::Conditional] The conditional that caused the resource to be skipped
       attr_accessor :conditional
 
       # The status of the resource:
-      #   updated:     ran and converged
-      #   up_to_date:  skipped due to idempotency
-      #   skipped:     skipped due to a conditional
-      #   failed:      failed with an exception
-      #   unprocessed: resources that were not touched by a run that failed
+      #   - updated:     ran and converged
+      #   - up_to_date:  skipped due to idempotency
+      #   - skipped:     skipped due to a conditional
+      #   - failed:      failed with an exception
+      #   - unprocessed: resources that were not touched by a run that failed
+      #
+      # @return [Symbol] status
       #
       attr_accessor :status
 
       # The "nesting" level.  Outer resources in recipe context are 0 here, while for every
       # sub-resource_collection inside of a custom resource this number is incremented by 1.
+      # Resources that are fired via build-resource or manually creating and firing
+      #
+      # @return [Integer]
       #
       attr_accessor :nesting_level
 
@@ -71,37 +75,36 @@ class Chef
         @nesting_level = nesting_level
       end
 
+      # @return [Boolean] true if there was no exception
       def success?
         !exception
       end
     end
 
     attr_reader :action_records
-    attr_reader :total_res_count
     attr_reader :pending_updates
-    attr_reader :pending_update
-    attr_reader :status
-    attr_reader :run_status
     attr_reader :run_context
     attr_reader :consumers
     attr_reader :events
 
-    def initialize(events)
-      @action_records = []
-      @total_res_count    = 0
-      @pending_updates    = []
-      @consumers          = []
-      @events             = events
+    def initialize(events, run_context = nil, action_records = [])
+      @action_records  = action_records
+      @pending_updates = []
+      @consumers       = []
+      @events          = events
+      @run_context     = run_context
     end
 
-    def each(&block)
-      action_records.each(&block)
-    end
+    def_delegators :@action_records, :each, :last
 
-    # allows getting at the action_records collection filtered by nesting level and status
+    # Allows getting at the action_records collection filtered by nesting level and status.
+    #
+    # TODO: filtering by resource type+name
+    #
+    # @return [Chef::ActionCollection]
     #
     def filtered_collection(max_nesting: nil, up_to_date: true, skipped: true, updated: true, failed: true, unprocessed: true)
-      action_records.select do |rec|
+      subrecords = action_records.select do |rec|
         ( max_nesting.nil? || rec.nesting_level <= max_nesting ) &&
           ( rec.status == :up_to_date && up_to_date ||
             rec.status == :skipped && skipped ||
@@ -109,12 +112,17 @@ class Chef
             rec.status == :failed && failed ||
             rec.status == :unprocessed && unprocessed )
       end
+      self.class.new(events, run_context, subrecords)
     end
 
-    def run_started(run_status)
-      @run_status = run_status
-    end
-
+    # This hook gives us the run_context immediately after it is created so that we can wire up this object to it.
+    #
+    # This also causes the action_collection_registration event to fire, all consumers that have not yet registered with the
+    # action_collection must register via this callback.  This is the latest point before resources actually start to get
+    # evaluated.
+    #
+    # (see EventDispatch::Base#)
+    #
     def cookbook_compilation_start(run_context)
       run_context.action_collection = self
       # fire the action_colleciton_registration hook after cookbook_compilation_start -- last chance for consumers to register
@@ -125,57 +133,84 @@ class Chef
     # Consumers must call register -- either directly or through the action_collection_registration hook.  If
     # nobody has registered any interest, then no action tracking will be done.
     #
+    # @params object [Object] callers should call with `self`
+    #
     def register(object)
       consumers << object
     end
 
-    def converge_complete
-      return if consumers.empty?
-      detect_unprocessed_resources
-    end
-
+    # End of an unsuccessful converge used to fire off detect_unprocessed_resources.
+    #
+    # (see EventDispatch::Base#)
+    #
     def converge_failed(exception)
       return if consumers.empty?
       detect_unprocessed_resources
     end
 
+    # Hook to start processing a resource.  May be called within processing of an outer resource
+    # so the pending_updates array forms a stack that sub-resources are popped onto and off of.
+    # This is always called.
+    #
+    # (see EventDispatch::Base#)
+    #
     def resource_action_start(new_resource, action, notification_type = nil, notifier = nil)
       return if consumers.empty?
       pending_updates << ActionRecord.new(new_resource, action, pending_updates.length)
     end
 
+    # Hook called after a resource is loaded.  If load_current_resource fails, this hook will
+    # not be called and current_resource will be nil, and the resource_failed hook will be called.
+    #
+    # (see EventDispatch::Base#)
+    #
     def resource_current_state_loaded(new_resource, action, current_resource)
       return if consumers.empty?
       current_record.current_resource = current_resource
     end
 
+    # Hook called after an action is determined to be up to date.
+    #
+    # (see EventDispatch::Base#)
+    #
     def resource_up_to_date(new_resource, action)
       return if consumers.empty?
       current_record.status = :up_to_date
-      @total_res_count += 1
     end
 
+    # Hook called after an action is determined to be skipped due to a conditional.
+    #
+    # (see EventDispatch::Base#)
+    #
     def resource_skipped(resource, action, conditional)
       return if consumers.empty?
       current_record.status = :skipped
       current_record.conditional = conditional
-      @total_res_count += 1
     end
 
+    # Hook called after an action modifies the system and is marked updated.
+    #
+    # (see EventDispatch::Base#)
+    #
     def resource_updated(new_resource, action)
       return if consumers.empty?
       current_record.status = :updated
-      @total_res_count += 1
     end
 
+    # Hook called after an action fails.
+    #
+    # (see EventDispatch::Base#)
+    #
     def resource_failed(new_resource, action, exception)
       return if consumers.empty?
       current_record.status = :failed
       current_record.exception = exception
-
-      @total_res_count += 1
     end
 
+    # Hook called after an action is completed.  This is always called, even if the action fails.
+    #
+    # (see EventDispatch::Base#)
+    #
     def resource_completed(new_resource)
       return if consumers.empty?
       current_record.elapsed_time = new_resource.elapsed_time
@@ -195,8 +230,7 @@ class Chef
 
     private
 
-    # This is the current record we are working on at the top of the "pending_updates" stack.
-    #
+    # @return [Chef::ActionCollection::ActionRecord] the current record we are working on at the top of the stack
     def current_record
       pending_updates[-1]
     end

@@ -231,7 +231,8 @@ class Chef
         @http_output_locations_clients[http_url] ||= setup_http_client(http_url)
         @http_output_locations_clients[http_url].post(nil, message, headers)
       rescue
-        # FIXME: this feels like poor behavior on several different levels, at least its a warn now...
+        # FIXME: we do all kinds of complexity to deal with errors in send_to_data_collector and we just don't care here, which feels like
+        # like poor behavior on several different levels, at least its a warn now... (I don't quite understand why it was written this way)
         Chef::Log.warn("Data collector failed to send to URL location #{http_url}. Please check your configured data_collector.output_locations")
       end
 
@@ -304,7 +305,7 @@ class Chef
                          "Please upgrade Chef Server to 12.11.0 and remove the token from your config file " \
                          "to use key based authentication instead")
           return true
-        when !Chef::Config[:data_collector][:output_locations][:files].empty?
+        when Chef::Config[:data_collector][:output_locations] && Chef::Config[:data_collector][:output_locations][:files] && !Chef::Config[:data_collector][:output_locations][:files].empty?
           # we can run fine to a file without a token, even in solo mode.
           return true
         when running_mode == :solo && !Chef::Config[:data_collector][:token]
