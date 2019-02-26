@@ -117,7 +117,6 @@ provider_handler_map ||= nil
 resource_handler_map ||= nil
 
 RSpec.configure do |config|
-  config.tty = true
   config.include(Matchers)
   config.include(MockShellout::RSpec)
   config.filter_run focus: true
